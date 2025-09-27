@@ -1,4 +1,4 @@
 streamlit
 pandas
 requests
-snscrape @ git+https://github.com/JustAnotherArchivist/snscrape.git@develop
+snscrape @ git+https://github.com/JustAnotherArchivist/snscrape.git@master
