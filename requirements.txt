@@ -1,4 +1,4 @@
 streamlit
+snscrape
+yt-dlp
 pandas
-requests
-snscrape @ git+https://github.com/JustAnotherArchivist/snscrape.git@6196a63587742131215b2447917e3f8bbe54a55b
