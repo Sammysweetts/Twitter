@@ -1,108 +1,68 @@
 import streamlit as st
 import snscrape.modules.twitter as sntwitter
 import pandas as pd
-import requests
+import subprocess
 import os
-from zipfile import ZipFile
-import re
 
-# Function to sanitize filenames
-def sanitize_filename(filename):
-    return re.sub(r'[\/:*?"<>|]', '_', filename)
+st.set_page_config(page_title="Twitter Post & Video Downloader", layout="wide")
 
-# Function to download video
-def download_video(video_url, filename):
-    try:
-        with requests.get(video_url, stream=True) as r:
-            r.raise_for_status()
-            with open(filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-        return True
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error downloading video: {e}")
-        return False
+st.title("🐦 Twitter Post & Video Downloader (No API)")
 
-st.title("Twitter Data Downloader")
-st.write("Download posts and videos from any public Twitter account.")
+# Input: Twitter username
+username = st.text_input("Enter Twitter (X) username (without @)", "elonmusk")
 
-username = st.text_input("Enter Twitter Username (without @):")
-num_posts = st.number_input("Number of recent posts to fetch:", min_value=1, max_value=1000, value=10)
+# Input: Number of posts to scrape
+limit = st.slider("Number of posts to scrape", min_value=10, max_value=500, step=10, value=50)
 
-if st.button("Download Data"):
-    if username:
-        try:
-            st.info("Fetching data... Please wait.")
-
-            # Create a directory to store data
-            if not os.path.exists(username):
-                os.makedirs(username)
-
-            tweets_list = []
-            video_files = []
-
-            scraper = sntwitter.TwitterUserScraper(username)
-            for i, tweet in enumerate(scraper.get_items()):
-                if i >= num_posts:
-                    break
-
-                tweet_data = {
-                    'Date': tweet.date,
-                    'ID': tweet.id,
-                    'URL': tweet.url,
-                    'Content': tweet.rawContent,
-                    'Username': tweet.user.username,
-                    'Likes': tweet.likeCount,
-                    'Retweets': tweet.retweetCount
-                }
-                tweets_list.append(tweet_data)
-
-                if tweet.media:
-                    for medium in tweet.media:
-                        if isinstance(medium, sntwitter.Video):
-                            # Find the variant with the highest bitrate
-                            best_variant = None
-                            for variant in medium.variants:
-                                if variant.bitrate and (not best_variant or variant.bitrate > best_variant.bitrate):
-                                    best_variant = variant
-                            
-                            if best_variant:
-                                video_filename = os.path.join(username, f"{tweet.id}.mp4")
-                                if download_video(best_variant.url, video_filename):
-                                    video_files.append(video_filename)
-
-            if not tweets_list:
-                st.warning("No tweets found for this user.")
-            else:
-                # Create a DataFrame and save to CSV
-                df = pd.DataFrame(tweets_list)
-                csv_filename = os.path.join(username, f"{username}_tweets.csv")
-                df.to_csv(csv_filename, index=False)
-                st.success(f"Successfully fetched {len(tweets_list)} tweets.")
-
-                # Create a zip file
-                zip_filename = f"{username}_twitter_data.zip"
-                with ZipFile(zip_filename, 'w') as zipf:
-                    zipf.write(csv_filename, os.path.basename(csv_filename))
-                    for video_file in video_files:
-                        zipf.write(video_file, os.path.basename(video_file))
-
-                # Provide a download button for the zip file
-                with open(zip_filename, "rb") as f:
-                    st.download_button(
-                        label="Download ZIP",
-                        data=f,
-                        file_name=zip_filename,
-                        mime="application/zip"
-                    )
-
-                # Clean up individual files and directory
-                for file in [csv_filename] + video_files:
-                    os.remove(file)
-                os.rmdir(username)
-                os.remove(zip_filename)
-
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+if st.button("Scrape Twitter Data"):
+    if not username:
+        st.error("Please enter a valid Twitter username.")
     else:
-        st.warning("Please enter a Twitter username.")
+        tweets_list = []
+        tweet_urls = []
+        with st.spinner("Scraping tweets..."):
+            for i, tweet in enumerate(sntwitter.TwitterUserScraper(username).get_items()):
+                if i >= limit:
+                    break
+                tweets_list.append([
+                    tweet.date,
+                    tweet.url,
+                    tweet.content,
+                    tweet.media
+                ])
+                tweet_urls.append(tweet.url)
+
+        df = pd.DataFrame(tweets_list, columns=["Date", "URL", "Content", "Media"])
+        st.success(f"Scraped {len(df)} tweets/posts from @{username}")
+        st.dataframe(df)
+
+        # Download CSV
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Download Tweets as CSV", csv, f"{username}_tweets.csv", "text/csv")
+
+        # Extract tweets with videos
+        df_videos = df[df['Media'].astype(str).str.contains("Video", na=False)]
+
+        if len(df_videos) > 0:
+            st.subheader("🎥 Tweets with Video")
+            st.dataframe(df_videos[["Date", "URL", "Content"]])
+            st.warning("This may take time based on number of videos...")
+
+            download_folder = f"downloads/{username}_videos"
+            os.makedirs(download_folder, exist_ok=True)
+
+            with st.spinner("Downloading videos..."):
+                for url in df_videos["URL"]:
+                    try:
+                        subprocess.run([
+                            "yt-dlp", url,
+                            "-o", f"{download_folder}/%(id)s.%(ext)s"
+                        ], check=True)
+                    except Exception as e:
+                        st.error(f"Failed to download video: {url} - Error: {e}")
+
+            st.success(f"Videos downloaded to: {download_folder}")
+            st.write("Download individual files via [Streamlit Cloud workspace] or set up archive logic.")
+
+        else:
+            st.info("No videos found in the scraped tweets.")
