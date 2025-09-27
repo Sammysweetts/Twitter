@@ -1,4 +1,4 @@
-streamlit
-pandas
-ntscraper
-requests
+streamlit>=1.33
+snscrape>=0.7.0
+yt-dlp>=2024.05.27
+pandas>=2.2
