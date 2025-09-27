@@ -1,68 +1,91 @@
 import streamlit as st
-import snscrape.modules.twitter as sntwitter
 import pandas as pd
-import subprocess
+import asyncio
+import nest_asyncio
 import os
+import twint2
+import subprocess
 
-st.set_page_config(page_title="Twitter Post & Video Downloader", layout="wide")
+# Allow asyncio to run in nested event loops
+nest_asyncio.apply()
 
-st.title("🐦 Twitter Post & Video Downloader (No API)")
+st.set_page_config(page_title="Twitter (X) Downloader", layout="wide")
 
-# Input: Twitter username
-username = st.text_input("Enter Twitter (X) username (without @)", "elonmusk")
+st.title("🐦 Twitter (X) Post + Video Downloader (No API)")
 
-# Input: Number of posts to scrape
-limit = st.slider("Number of posts to scrape", min_value=10, max_value=500, step=10, value=50)
+username = st.text_input("Enter Twitter @username (no @ symbol)", "elonmusk")
+tweet_limit = st.slider("Number of tweets to scrape", 10, 200, 50)
 
-if st.button("Scrape Twitter Data"):
+if st.button("Scrape Now"):
     if not username:
-        st.error("Please enter a valid Twitter username.")
+        st.error("Please enter a valid username.")
     else:
-        tweets_list = []
-        tweet_urls = []
         with st.spinner("Scraping tweets..."):
-            for i, tweet in enumerate(sntwitter.TwitterUserScraper(username).get_items()):
-                if i >= limit:
-                    break
-                tweets_list.append([
-                    tweet.date,
-                    tweet.url,
-                    tweet.content,
-                    tweet.media
-                ])
-                tweet_urls.append(tweet.url)
+            # Setup Twint2 configuration
+            c = twint2.Config()
+            c.Username = username
+            c.Limit = tweet_limit
+            c.Pandas = True
+            c.Store_object = True
+            c.Hide_output = True
 
-        df = pd.DataFrame(tweets_list, columns=["Date", "URL", "Content", "Media"])
-        st.success(f"Scraped {len(df)} tweets/posts from @{username}")
-        st.dataframe(df)
+            # Run TWINT2 search
+            asyncio.run(twint2.run.Search(c))
+            tweets_df = twint2.storage.panda.Tweets_df
 
-        # Download CSV
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Download Tweets as CSV", csv, f"{username}_tweets.csv", "text/csv")
-
-        # Extract tweets with videos
-        df_videos = df[df['Media'].astype(str).str.contains("Video", na=False)]
-
-        if len(df_videos) > 0:
-            st.subheader("🎥 Tweets with Video")
-            st.dataframe(df_videos[["Date", "URL", "Content"]])
-            st.warning("This may take time based on number of videos...")
-
-            download_folder = f"downloads/{username}_videos"
-            os.makedirs(download_folder, exist_ok=True)
-
-            with st.spinner("Downloading videos..."):
-                for url in df_videos["URL"]:
-                    try:
-                        subprocess.run([
-                            "yt-dlp", url,
-                            "-o", f"{download_folder}/%(id)s.%(ext)s"
-                        ], check=True)
-                    except Exception as e:
-                        st.error(f"Failed to download video: {url} - Error: {e}")
-
-            st.success(f"Videos downloaded to: {download_folder}")
-            st.write("Download individual files via [Streamlit Cloud workspace] or set up archive logic.")
-
+        if tweets_df.empty:
+            st.warning("No tweets found or scraping failed.")
         else:
-            st.info("No videos found in the scraped tweets.")
+            st.success(f"Successfully scraped {len(tweets_df)} tweets from @{username}")
+
+            # Show table
+            tweets_df_display = tweets_df[["date", "tweet", "link"]]
+            st.dataframe(tweets_df_display)
+
+            # Allow CSV download
+            csv = tweets_df_display.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📁 Download CSV",
+                data=csv,
+                file_name=f"{username}_tweets.csv",
+                mime="text/csv",
+            )
+
+            # Find Tweets likely containing video
+            st.subheader("🎥 Tweets with Videos (Prediction Based)")
+            video_tweets_df = tweets_df[tweets_df["tweet"].str.contains("https://t.co/")]
+            likely_video_df = video_tweets_df[
+                video_tweets_df["tweet"].str.contains("video", case=False)
+                | video_tweets_df["tweet"].str.contains("watch", case=False)
+                | video_tweets_df["tweet"].str.contains("youtu", case=False)
+            ]
+
+            if not likely_video_df.empty:
+                st.info(f"Found {len(likely_video_df)} tweet(s) that likely contain videos.")
+
+                st.write("Some sample video tweet links:")
+                st.write(likely_video_df["link"].tolist())
+
+                # Download videos with yt-dlp
+                download_dir = f"downloads/{username}_videos"
+                os.makedirs(download_dir, exist_ok=True)
+
+                with st.spinner("Downloading videos..."):
+                    for url in likely_video_df["link"].tolist():
+                        try:
+                            subprocess.run(
+                                [
+                                    "yt-dlp",
+                                    url,
+                                    "-o",
+                                    f"{download_dir}/%(title).50s.%(ext)s",
+                                ],
+                                check=True,
+                            )
+                        except Exception as e:
+                            st.error(f"Error downloading {url}: {e}")
+
+                st.success(f"Downloaded videos to `{download_dir}` (check Streamlit Cloud workspace files)")
+
+            else:
+                st.warning("Couldn't find any tweets that look like video content.")
