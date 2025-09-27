@@ -1,4 +1,5 @@
 streamlit
-snscrape
-yt-dlp
 pandas
+yt-dlp
+nest_asyncio
+twint2
