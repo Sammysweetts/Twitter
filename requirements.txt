@@ -1,5 +1,4 @@
 streamlit
 pandas
-yt-dlp
-nest_asyncio
-twint2
+ntscraper
+requests
